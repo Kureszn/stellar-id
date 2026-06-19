@@ -376,6 +376,44 @@ impl StellarIdContract {
         );
     }
 
+    /// Renew a credential (issuer only)
+    pub fn renew_credential(
+        env: Env,
+        issuer: Address,
+        credential_id: u64,
+        additional_seconds: u64,
+    ) {
+        issuer.require_auth();
+
+        let mut credential: Credential = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Credential(credential_id))
+            .expect("Credential not found");
+
+        assert!(
+            credential.issuer == issuer,
+            "Only the original issuer can renew"
+        );
+        assert!(!credential.revoked, "Cannot renew a revoked credential");
+        assert!(additional_seconds > 0, "Additional seconds must be greater than zero");
+        
+        if credential.expires_at == 0 {
+            panic!("Cannot renew a non-expiring credential");
+        }
+
+        let new_expires_at = credential.expires_at + additional_seconds;
+        credential.expires_at = new_expires_at;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Credential(credential_id), &credential);
+
+        env.events().publish(
+            (Symbol::new(&env, "credential_renewed"),),
+            (credential_id, new_expires_at),
+        );
+    }
+
     // --------------------------------------------------------
     // Query Functions
     // --------------------------------------------------------
@@ -816,5 +854,82 @@ mod tests {
 
         let cred_id = client.issue_credential(&issuer, &subject, &schema_id, &0u64);
         client.revoke_credential(&attacker, &cred_id);
+    }
+
+    #[test]
+    fn test_renew_credential_happy_path() {
+        let env = Env::default();
+        env.ledger().set_timestamp(1000);
+        let (admin, client) = setup(&env);
+        let issuer = register_issuer_helper(&env, &client, &admin);
+        let schema_id = register_schema_helper(&env, &client, &issuer);
+        let subject = Address::generate(&env);
+
+        let cred_id = client.issue_credential(&issuer, &subject, &schema_id, &3600u64);
+        let cred = client.get_credential(&cred_id);
+        assert_eq!(cred.expires_at, 4600);
+
+        client.renew_credential(&issuer, &cred_id, &1800u64);
+        let renewed_cred = client.get_credential(&cred_id);
+        assert_eq!(renewed_cred.expires_at, 6400);
+        assert!(!renewed_cred.revoked);
+    }
+
+    #[test]
+    #[should_panic(expected = "Only the original issuer can renew")]
+    fn test_renew_credential_non_issuer() {
+        let env = Env::default();
+        env.ledger().set_timestamp(1000);
+        let (admin, client) = setup(&env);
+        let issuer = register_issuer_helper(&env, &client, &admin);
+        let schema_id = register_schema_helper(&env, &client, &issuer);
+        let subject = Address::generate(&env);
+        let attacker = Address::generate(&env);
+
+        let cred_id = client.issue_credential(&issuer, &subject, &schema_id, &3600u64);
+        client.renew_credential(&attacker, &cred_id, &1800u64);
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot renew a revoked credential")]
+    fn test_renew_credential_revoked() {
+        let env = Env::default();
+        env.ledger().set_timestamp(1000);
+        let (admin, client) = setup(&env);
+        let issuer = register_issuer_helper(&env, &client, &admin);
+        let schema_id = register_schema_helper(&env, &client, &issuer);
+        let subject = Address::generate(&env);
+
+        let cred_id = client.issue_credential(&issuer, &subject, &schema_id, &3600u64);
+        client.revoke_credential(&issuer, &cred_id);
+        client.renew_credential(&issuer, &cred_id, &1800u64);
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot renew a non-expiring credential")]
+    fn test_renew_credential_non_expiring() {
+        let env = Env::default();
+        env.ledger().set_timestamp(1000);
+        let (admin, client) = setup(&env);
+        let issuer = register_issuer_helper(&env, &client, &admin);
+        let schema_id = register_schema_helper(&env, &client, &issuer);
+        let subject = Address::generate(&env);
+
+        let cred_id = client.issue_credential(&issuer, &subject, &schema_id, &0u64);
+        client.renew_credential(&issuer, &cred_id, &1800u64);
+    }
+
+    #[test]
+    #[should_panic(expected = "Additional seconds must be greater than zero")]
+    fn test_renew_credential_zero_seconds() {
+        let env = Env::default();
+        env.ledger().set_timestamp(1000);
+        let (admin, client) = setup(&env);
+        let issuer = register_issuer_helper(&env, &client, &admin);
+        let schema_id = register_schema_helper(&env, &client, &issuer);
+        let subject = Address::generate(&env);
+
+        let cred_id = client.issue_credential(&issuer, &subject, &schema_id, &3600u64);
+        client.renew_credential(&issuer, &cred_id, &0u64);
     }
 }
