@@ -817,4 +817,58 @@ mod tests {
         let cred_id = client.issue_credential(&issuer, &subject, &schema_id, &0u64);
         client.revoke_credential(&attacker, &cred_id);
     }
+
+    #[test]
+    #[should_panic(expected = "Only admin can deactivate issuers")]
+    fn test_non_admin_cannot_deactivate_issuer() {
+        let env = Env::default();
+        let (admin, client) = setup(&env);
+        let issuer = register_issuer_helper(&env, &client, &admin);
+        let non_admin = Address::generate(&env);
+
+        client.deactivate_issuer(&non_admin, &issuer);
+    }
+
+    #[test]
+    #[should_panic(expected = "Issuer is not active")]
+    fn test_deactivated_issuer_cannot_issue_credential() {
+        let env = Env::default();
+        env.ledger().set_timestamp(1000);
+        let (admin, client) = setup(&env);
+        let issuer = register_issuer_helper(&env, &client, &admin);
+        let schema_id = register_schema_helper(&env, &client, &issuer);
+        let subject = Address::generate(&env);
+
+        client.deactivate_issuer(&admin, &issuer);
+        client.issue_credential(&issuer, &subject, &schema_id, &0u64);
+    }
+
+    #[test]
+    #[should_panic(expected = "Issuer is not active")]
+    fn test_deactivated_issuer_cannot_register_schema() {
+        let env = Env::default();
+        let (admin, client) = setup(&env);
+        let issuer = register_issuer_helper(&env, &client, &admin);
+
+        client.deactivate_issuer(&admin, &issuer);
+        client.register_schema(
+            &issuer,
+            &String::from_str(&env, "Post-Deactivation Schema"),
+            &String::from_str(&env, "Should not be allowed"),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Only the original issuer can revoke")]
+    fn test_subject_cannot_revoke_own_credential() {
+        let env = Env::default();
+        env.ledger().set_timestamp(1000);
+        let (admin, client) = setup(&env);
+        let issuer = register_issuer_helper(&env, &client, &admin);
+        let schema_id = register_schema_helper(&env, &client, &issuer);
+        let subject = Address::generate(&env);
+
+        let cred_id = client.issue_credential(&issuer, &subject, &schema_id, &0u64);
+        client.revoke_credential(&subject, &cred_id);
+    }
 }
