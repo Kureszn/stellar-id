@@ -80,6 +80,7 @@ impl StellarIdContract {
     // --------------------------------------------------------
 
     /// Initialize the contract with an admin address
+    /// Initializes the contract. Must be called once before any other function.
     pub fn initialize(env: Env, admin: Address) {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
